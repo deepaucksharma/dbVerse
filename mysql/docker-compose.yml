@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:    
+  hr-portal:
+    build:
+      context: ./hr-portal
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NODE_ENV=production
+    ports:
+      - "${HR_PORTAL_PORT}:3000"
+    mem_limit: 2G
+    
+  payroll-system:
+    build:
+      context: ./payroll-system
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NODE_ENV=production
+    ports:
+      - "3001:3001"
+    mem_limit: 2G
+
+  reporting-dashboard:
+    build:
+      context: ./reporting-dashboard
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NODE_ENV=production
+    ports:
+      - "3002:3002"
+    mem_limit: 2G
+
+  performance-review:
+    build:
+      context: ./performance-review
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NODE_ENV=production
+    ports:
+      - "3003:3003"
+    mem_limit: 2G
+
+  admin-console:
+    build:
+      context: ./admin-console
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NODE_ENV=production
+    ports:
+      - "3004:3004"
+    mem_limit: 2G
+
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./k6:/scripts
+    environment:
+      - HR_PORTAL_URL=http://hr-portal:3000
+      - PAYROLL_SYSTEM_URL=http://payroll-system:3001
+      - REPORTING_DASHBOARD_URL=http://reporting-dashboard:3002
+      - PERFORMANCE_REVIEW_URL=http://performance-review:3003
+      - ADMIN_CONSOLE_URL=http://admin-console:3004
+    depends_on:
+      - hr-portal
+      - payroll-system
+      - reporting-dashboard
+      - performance-review
+      - admin-console
+    command: run /scripts/load-test.js

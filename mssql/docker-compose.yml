@@ -1,0 +1,143 @@
+version: '3.8'
+
+services:
+  # 1) MSSQL container
+  mssql-db:
+    build:
+      context: ./mssql
+      dockerfile: Dockerfile
+    container_name: mssql-db
+    environment:
+      - SA_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql/data
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}", "-Q", "SELECT 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # 2) HR Portal
+  hr-portal:
+    build:
+      context: ./hr-portal
+    environment:
+      - MSSQL_HOST=mssql-db
+      - MSSQL_USER=sa
+      - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DB=${MSSQL_DB:-AdventureWorks}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_HR:-HR-Portal}
+      - NODE_ENV=production
+      - PORT=${HR_PORTAL_PORT:-3000}
+    depends_on:
+      mssql-db:
+        condition: service_healthy
+    ports:
+      - "${HR_PORTAL_PORT:-3000}:3000"
+    mem_limit: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 3) Payroll System
+  payroll-system:
+    build:
+      context: ./payroll-system
+    environment:
+      - MSSQL_HOST=mssql-db
+      - MSSQL_USER=sa
+      - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DB=${MSSQL_DB:-AdventureWorks}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PAYROLL:-Payroll-System}
+      - NODE_ENV=production
+      - PORT=${PAYROLL_SYSTEM_PORT:-3001}
+    depends_on:
+      mssql-db:
+        condition: service_healthy
+    ports:
+      - "${PAYROLL_SYSTEM_PORT:-3001}:3001"
+    mem_limit: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 4) Performance Review
+  performance-review:
+    build:
+      context: ./performance-review
+    environment:
+      - MSSQL_HOST=mssql-db
+      - MSSQL_USER=sa
+      - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DB=${MSSQL_DB:-AdventureWorks}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PERFORMANCE:-Performance-Review}
+      - NODE_ENV=production
+      - PORT=${PERFORMANCE_REVIEW_PORT:-3002}
+    depends_on:
+      mssql-db:
+        condition: service_healthy
+    ports:
+      - "${PERFORMANCE_REVIEW_PORT:-3002}:3002"
+    mem_limit: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 5) Admin Console
+  admin-console:
+    build:
+      context: ./admin-console
+    environment:
+      - MSSQL_HOST=mssql-db
+      - MSSQL_USER=sa
+      - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      - MSSQL_DB=${MSSQL_DB:-AdventureWorks}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_ADMIN:-Admin-Console}
+      - NODE_ENV=production
+      - PORT=${ADMIN_CONSOLE_PORT:-3003}
+    depends_on:
+      mssql-db:
+        condition: service_healthy
+    ports:
+      - "${ADMIN_CONSOLE_PORT:-3003}:3003"
+    mem_limit: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 6) K6 Load Testing
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./k6:/scripts
+    environment:
+      - HR_PORTAL_URL=${HR_PORTAL_URL:-http://hr-portal:3000}
+      - PAYROLL_SYSTEM_URL=${PAYROLL_SYSTEM_URL:-http://payroll-system:3001}
+      - PERFORMANCE_REVIEW_URL=${PERFORMANCE_REVIEW_URL:-http://performance-review:3002}
+      - ADMIN_CONSOLE_URL=${ADMIN_CONSOLE_URL:-http://admin-console:3003}
+    depends_on:
+      - hr-portal
+      - payroll-system
+      - performance-review
+      - admin-console
+    command: run /scripts/load-test.js
+
+volumes:
+  mssql-data:

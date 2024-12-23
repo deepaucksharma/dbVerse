@@ -1,0 +1,328 @@
+version: "3.9"
+services:
+  postgres-db:
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+      args:
+        - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+        - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD}
+        - NR_INFRA_VERSION=1.58.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} && psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c 'SELECT 1'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    networks:
+      - backend
+    restart: unless-stopped
+
+  hr-portal:
+    build:
+      context: ./hr-portal
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_HR}
+      - NODE_ENV=production
+      - PORT=${HR_PORTAL_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${HR_PORTAL_PORT}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${HR_PORTAL_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  payroll-system:
+    build:
+      context: ./payroll-system
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PAYROLL}
+      - NODE_ENV=production
+      - PORT=${PAYROLL_SYSTEM_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${PAYROLL_SYSTEM_PORT}:3001"
+    healthcheck:
+      test:
+        ["CMD", "curl", "-f", "http://localhost:${PAYROLL_SYSTEM_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  reporting-dashboard:
+    build:
+      context: ./reporting-dashboard
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_REPORTING}
+      - NODE_ENV=production
+      - PORT=${REPORTING_DASHBOARD_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${REPORTING_DASHBOARD_PORT}:3002"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:${REPORTING_DASHBOARD_PORT}/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  performance-review:
+    build:
+      context: ./performance-review
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PERFORMANCE}
+      - NODE_ENV=production
+      - PORT=${PERFORMANCE_REVIEW_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${PERFORMANCE_REVIEW_PORT}:3003"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:${PERFORMANCE_REVIEW_PORT}/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  admin-console:
+    build:
+      context: ./admin-console
+      dockerfile: Dockerfile
+    environment:
+      - POSTGRES_HOST=postgres-db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_ADMIN}
+      - NODE_ENV=production
+      - PORT=${ADMIN_CONSOLE_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${ADMIN_CONSOLE_PORT}:3004"
+    healthcheck:
+      test:
+        ["CMD", "curl", "-f", "http://localhost:${ADMIN_CONSOLE_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./k6:/scripts
+    environment:
+      - HR_PORTAL_URL=${HR_PORTAL_URL}
+      - PAYROLL_SYSTEM_URL=${PAYROLL_SYSTEM_PORT}
+      - REPORTING_DASHBOARD_URL=${REPORTING_DASHBOARD_URL}
+      - PERFORMANCE_REVIEW_URL=${PERFORMANCE_REVIEW_URL}
+      - ADMIN_CONSOLE_URL=${ADMIN_CONSOLE_URL}
+    networks:
+      - frontend
+    depends_on:
+      postgres-db:
+        condition: service_healthy      
+    command: run /scripts/load-test.js
+volumes:
+  postgres-data:
+    name: psql_postgres_data
+    driver: local
+
+networks:
+  frontend:
+    name: psql_frontend
+    driver: bridge
+  backend:
+    name: psql_backend
+    driver: bridge

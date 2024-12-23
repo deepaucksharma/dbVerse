@@ -1,0 +1,12 @@
+integrations:
+  - name: nri-postgresql
+    interval: 30s
+    command: /var/db/newrelic-infra/newrelic-integrations/nri-postgresql
+    env:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOSTNAME: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: employees
+      POSTGRES_SCHEMA: employees
+      NRIA_CACHE_PATH: "/var/db/newrelic-infra/cache"
