@@ -1,5 +1,5 @@
 
-# PostgreSQL Performance Testing Environment
+# PostgreSQL Performance Monitoring Environment
 
 This repository provides a **multi-service** containerized environment for **db performance monitoring** on a PostgreSQL 15 database. It leverages advanced monitoring extensions and integrates with **New Relic** for real-time performance insights. Several Node.js microservices (HR portal, Payroll, Admin Console, etc.) simulate various workloads against the database, and a **k6** script generates load to test the system under stress.
 
