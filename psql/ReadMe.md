@@ -17,7 +17,6 @@ This repository provides a containerized environment for **db performance monito
    ```
 2. **Configure environment**:
    - Copy or edit the `.env` file to set `POSTGRES_PASSWORD`, `NEW_RELIC_LICENSE_KEY`, etc.
-   - (Optional) Place `employees_data.sql(.bz2)` in `postgres/init-scripts/` if you want the sample data.
 3. **Build & Run**:
    ```bash
    docker-compose build
