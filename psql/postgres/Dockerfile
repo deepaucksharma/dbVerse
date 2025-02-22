@@ -11,8 +11,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Clone and build nri-postgresql with retry logic
-RUN git clone --depth=1 --branch queryAnalysisTestingV8 \
-    https://github.com/sjyothi54/nri-postgresql.git . && \
+RUN git clone --depth=1  \
+    https://github.com/newrelic/nri-postgresql.git . && \
     go env -w GOPROXY=direct && \
     go env -w GOSUMDB=off && \
     for i in 1 2 3 4 5; do \
@@ -25,37 +25,37 @@ RUN git clone --depth=1 --branch queryAnalysisTestingV8 \
 # ------------------------------------------------------------------------
 # Stage 2: Build pg_stat_monitor + pg_wait_sampling (pinned versions)
 # ------------------------------------------------------------------------
-    FROM postgres:15-bullseye AS extensions-builder
+FROM postgres:15-bullseye AS extensions-builder
 
-    RUN apt-get update && \
-        apt-get install -y --no-install-recommends \
-            build-essential \
-            git \
-            ca-certificates \
-            postgresql-server-dev-15 && \
-        update-ca-certificates
-    
-    # Build pg_stat_monitor (version 2.1.0)
-    RUN cd /tmp && \
-        for i in 1 2 3 4 5; do \
-            echo "Attempt $i: cloning pg_stat_monitor..."; \
-            git clone --depth=1 -b 2.1.0 https://github.com/percona/pg_stat_monitor.git && \
-            break || sleep 5; \
-        done && \
-        cd pg_stat_monitor && \
-        make USE_PGXS=1 && \
-        make USE_PGXS=1 install
-    
-    # Build pg_wait_sampling (version 1.1.6)
-    RUN cd /tmp && \
-        for i in 1 2 3 4 5; do \
-            echo "Attempt $i: cloning pg_wait_sampling..."; \
-            git clone --depth=1 -b v1.1.6 https://github.com/postgrespro/pg_wait_sampling.git && \
-            break || sleep 5; \
-        done && \
-        cd pg_wait_sampling && \
-        make USE_PGXS=1 && \
-        make USE_PGXS=1 install
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        ca-certificates \
+        postgresql-server-dev-15 && \
+    update-ca-certificates
+
+# Build pg_stat_monitor (version 2.1.0)
+RUN cd /tmp && \
+    for i in 1 2 3 4 5; do \
+        echo "Attempt $i: cloning pg_stat_monitor..."; \
+        git clone --depth=1 -b 2.1.0 https://github.com/percona/pg_stat_monitor.git && \
+        break || sleep 5; \
+    done && \
+    cd pg_stat_monitor && \
+    make USE_PGXS=1 && \
+    make USE_PGXS=1 install
+
+# Build pg_wait_sampling (version 1.1.6)
+RUN cd /tmp && \
+    for i in 1 2 3 4 5; do \
+        echo "Attempt $i: cloning pg_wait_sampling..."; \
+        git clone --depth=1 -b v1.1.6 https://github.com/postgrespro/pg_wait_sampling.git && \
+        break || sleep 5; \
+    done && \
+    cd pg_wait_sampling && \
+    make USE_PGXS=1 && \
+    make USE_PGXS=1 install
 
 # ------------------------------------------------------------------------
 # Stage 3: Process initialization data
@@ -89,8 +89,8 @@ RUN if [ -f employees_data.sql.bz2 ]; then \
 FROM postgres:15-bullseye
 
 # Build args
-ARG NEW_RELIC_LICENSE_KEY
-ARG NR_POSTGRES_PASSWORD
+# ARG NEW_RELIC_LICENSE_KEY <-- REMOVE
+# ARG NR_POSTGRES_PASSWORD <-- REMOVE
 ARG NR_INFRA_VERSION=1.58.1
 
 # Environment variables
@@ -133,25 +133,28 @@ COPY --from=builder-go /build/bin/nri-postgresql /var/db/newrelic-infra/newrelic
 RUN chmod 755 /var/db/newrelic-infra/newrelic-integrations/nri-postgresql
 
 # In the final stage, before downloading New Relic agent:
-    RUN mkdir -p /usr/local/newrelic-infra/bin /tmp/pgdata /etc/newrelic-infra && \
-    chmod -R 777 /usr/local/newrelic-infra /tmp/pgdata /etc/newrelic-infra && \
-    cd /tmp && \
-    AGENT_URL="https://download.newrelic.com/infrastructure_agent/binaries/linux/amd64/newrelic-infra_linux_${NR_INFRA_VERSION}_amd64.tar.gz" && \
-    echo "Downloading New Relic Infrastructure agent version ${NR_INFRA_VERSION}..." && \
-    curl -fsSL --retry 3 "${AGENT_URL}" -o newrelic-infra.tar.gz && \
-    tar -xzf newrelic-infra.tar.gz && \
-    cp newrelic-infra/usr/bin/newrelic-infra /usr/local/newrelic-infra/bin/ && \
-    chmod +x /usr/local/newrelic-infra/bin/newrelic-infra && \
-    rm -rf /tmp/*
+RUN mkdir -p /usr/local/newrelic-infra/bin /tmp/pgdata /etc/newrelic-infra && \
+chmod -R 777 /usr/local/newrelic-infra /tmp/pgdata /etc/newrelic-infra && \
+cd /tmp && \
+AGENT_URL="https://download.newrelic.com/infrastructure_agent/binaries/linux/amd64/newrelic-infra_linux_${NR_INFRA_VERSION}_amd64.tar.gz" && \
+echo "Downloading New Relic Infrastructure agent version ${NR_INFRA_VERSION}..." && \
+curl -fsSL --retry 3 "${AGENT_URL}" -o newrelic-infra.tar.gz && \
+tar -xzf newrelic-infra.tar.gz && \
+cp newrelic-infra/usr/bin/newrelic-infra /usr/local/newrelic-infra/bin/ && \
+chmod +x /usr/local/newrelic-infra/bin/newrelic-infra && \
+rm -rf /tmp/*
 
 # Configure New Relic with secure handling of license key
+# Set license key via environment variable
 RUN if [ -n "${NEW_RELIC_LICENSE_KEY}" ]; then \
-        echo "license_key: ${NEW_RELIC_LICENSE_KEY}" > /etc/newrelic-infra.yml && \
-        echo "enable_process_metrics: true" >> /etc/newrelic-infra.yml && \
-        chmod 640 /etc/newrelic-infra.yml; \
-    else \
-        echo "WARNING: NEW_RELIC_LICENSE_KEY not provided"; \
-    fi
+    echo "license_key: ${NEW_RELIC_LICENSE_KEY}" > /etc/newrelic-infra.yml && \
+    echo "enable_process_metrics: true" >> /etc/newrelic-infra.yml && \
+    echo "log_file: /var/log/newrelic-infra/newrelic-infra.log" >> /etc/newrelic-infra.yml &&\
+    chmod 640 /etc/newrelic-infra.yml; \
+else \
+    echo "WARNING: NEW_RELIC_LICENSE_KEY not provided"; \
+fi
+
 
 # Copy configuration files
 COPY config/postgresql.conf /etc/postgresql/

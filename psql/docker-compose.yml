@@ -4,16 +4,16 @@ services:
       context: ./postgres
       dockerfile: Dockerfile
       args:
-        - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
-        - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD}
-        - NR_INFRA_VERSION=1.58.1
+        # - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}  <-- REMOVED
+        # - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD} <-- REMOVED
+        - NR_INFRA_VERSION=1.58.1  # Keep for consistency
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
-      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
-      - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}  # Keep
+      # - NR_POSTGRES_PASSWORD=${NR_POSTGRES_PASSWORD} <-- REMOVE
       - PGDATA=/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -30,7 +30,7 @@ services:
         ]
       timeout: 5s
       retries: 5
-      start_period: 120s
+      start_period: 120s  # Increased start_period
     shm_size: '2gb'
     deploy:
       resources:
@@ -44,7 +44,7 @@ services:
       - backend
     restart: unless-stopped
 
-  hr-portal:
+  hr-portal:  # ***Example - Repeat for ALL Node.js services***
     build:
       context: ./hr-portal
       dockerfile: Dockerfile
@@ -54,19 +54,19 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_SCHEMA=${POSTGRES_SCHEMA}
-      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
-      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_HR}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}  # <-- CRITICAL: Add
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_HR}    # <-- CRITICAL: Add
       - NODE_ENV=production
       - PORT=${HR_PORTAL_PORT}
-      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRIES=5  # Consider increasing these
       - DB_CONNECTION_RETRY_DELAY=5000
     ports:
       - "${HR_PORTAL_PORT}:3000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${HR_PORTAL_PORT}/health"]
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 3  # Could increase retries
+      start_period: 120s  # match with postgres start period.
     deploy:
       resources:
         limits:
@@ -90,7 +90,7 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
-
+      # ... (Repeat for ALL other Node.js services: payroll-system, reporting-dashboard, performance-review, admin-console) ...
   payroll-system:
     build:
       context: ./payroll-system
@@ -113,8 +113,8 @@ services:
       test:
         ["CMD", "curl", "-f", "http://localhost:${PAYROLL_SYSTEM_PORT}/health"]
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -166,8 +166,8 @@ services:
           "http://localhost:${REPORTING_DASHBOARD_PORT}/health",
         ]
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -219,8 +219,8 @@ services:
           "http://localhost:${PERFORMANCE_REVIEW_PORT}/health",
         ]
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -267,8 +267,8 @@ services:
       test:
         ["CMD", "curl", "-f", "http://localhost:${ADMIN_CONSOLE_PORT}/health"]
       timeout: 5s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -292,7 +292,7 @@ services:
         max-size: "10m"
         max-file: "3"
     restart: unless-stopped
-  k6:
+  k6:  # No changes needed here
     image: grafana/k6
     volumes:
       - ./k6:/scripts
@@ -306,8 +306,9 @@ services:
       - frontend
     depends_on:
       postgres-db:
-        condition: service_healthy      
+        condition: service_healthy
     command: run /scripts/load-test.js
+
 volumes:
   postgres-data:
     name: psql_postgres_data

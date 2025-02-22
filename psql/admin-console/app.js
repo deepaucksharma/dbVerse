@@ -1,5 +1,3 @@
-// Ensure newrelic is the first import
-const newrelic = require('newrelic');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -8,7 +6,6 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
-    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,7 +27,6 @@ async function startAdminConsole() {
   });
 
   pool.on('error', (err) => {
-    newrelic.noticeError(err);
     console.error('Unexpected error on idle client', err);
     process.exit(-1);
   });
@@ -49,33 +45,17 @@ async function startAdminConsole() {
   app.use(requestLogger('Admin-Console'));
 
   app.get('/health', (req, res) => {
-    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  app.get('/admin/employees/search', async (req, res) => {
-    newrelic.setTransactionName('Admin/Employee/Search');
+  app.get('/admin/departments', async (req, res) => {
     let client;
     try {
       client = await pool.connect();
       await client.query('BEGIN');
       const { rows } = await client.query(`
-        SELECT DISTINCT 
-          e.id, e.first_name, e.last_name, e.hire_date,
-          t.title, s.amount as salary, d.dept_name,
-          (SELECT COUNT(*) FROM title t2 WHERE t2.employee_id = e.id) as role_changes,
-          (SELECT MAX(amount) FROM salary s2 WHERE s2.employee_id = e.id) as highest_salary
-        FROM employee e
-        JOIN title t ON e.id = t.employee_id
-        JOIN salary s ON e.id = s.employee_id
-        JOIN department_employee de ON e.id = de.employee_id
-        JOIN department d ON de.department_id = d.id
-        WHERE (e.first_name ILIKE '%ar%' OR e.last_name ILIKE '%son%')
-          AND t.to_date = '9999-01-01'
-          AND s.to_date = '9999-01-01'
-          AND de.to_date = '9999-01-01'
-          AND s.amount > 60000
-          AND EXTRACT(YEAR FROM e.hire_date) > 1990
+        SELECT id, dept_name
+        FROM department
       `);
       await client.query('COMMIT');
       res.json({ status: 'ok', data: rows });
@@ -83,151 +63,6 @@ async function startAdminConsole() {
       if (client) {
         await client.query('ROLLBACK');
       }
-      newrelic.noticeError(err);
-      res.status(500).json({ error: err.message });
-    } finally {
-      if (client) client.release();
-    }
-  });
-
-  app.put('/admin/employees/bulk_title_update', async (req, res) => {
-    newrelic.setTransactionName('Admin/Employee/BulkTitleUpdate');
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      await client.query(`
-        WITH current_titles AS (
-          UPDATE title t
-          SET to_date = CURRENT_DATE
-          FROM department_employee de
-          WHERE t.employee_id = de.employee_id
-            AND de.department_id = 'd005'
-            AND t.title = 'Engineer'
-            AND t.to_date = '9999-01-01'
-            AND de.to_date = '9999-01-01'
-          RETURNING t.employee_id
-        )
-        INSERT INTO title (employee_id, title, from_date, to_date)
-        SELECT employee_id, 'Senior Engineer', CURRENT_DATE, '9999-01-01'
-        FROM current_titles
-      `);
-
-      await client.query('COMMIT');
-      res.json({ status: 'ok' });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      newrelic.noticeError(err);
-      res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
-    }
-  });
-
-  app.get('/admin/departments/details', async (req, res) => {
-    newrelic.setTransactionName('Admin/Department/Details');
-    let client;
-    try {
-      client = await pool.connect();
-      await client.query('BEGIN');
-      const { rows } = await client.query(`
-        SELECT 
-          d.id as dept_no,
-          d.dept_name,
-          COUNT(DISTINCT de.employee_id) as current_employees,
-          COUNT(DISTINCT dm.employee_id) as total_managers,
-          MIN(dm.from_date) as first_manager_date,
-          COUNT(DISTINCT t.title) as unique_titles,
-          AVG(s.amount) as avg_salary,
-          (SELECT COUNT(*) 
-           FROM department_employee de2 
-           WHERE de2.department_id = d.id 
-             AND de2.to_date < CURRENT_DATE) as past_employees
-        FROM department d
-        LEFT JOIN department_employee de ON d.id = de.department_id AND de.to_date = '9999-01-01'
-        LEFT JOIN department_manager dm ON d.id = dm.department_id
-        LEFT JOIN title t ON de.employee_id = t.employee_id AND t.to_date = '9999-01-01'
-        LEFT JOIN salary s ON de.employee_id = s.employee_id AND s.to_date = '9999-01-01'
-        GROUP BY d.id, d.dept_name
-      `);
-      await client.query('COMMIT');
-      res.json({ status: 'ok', data: rows });
-    } catch (err) {
-      if (client) {
-        await client.query('ROLLBACK');
-      }
-      newrelic.noticeError(err);
-      res.status(500).json({ error: err.message });
-    } finally {
-      if (client) client.release();
-    }
-  });
-
-  app.get('/admin/employees/details/:id', async (req, res) => {
-    newrelic.setTransactionName('Admin/Employee/Details');
-    let client;
-    try {
-      client = await pool.connect();
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        `
-        SELECT 
-          e.id, e.first_name, e.last_name, e.hire_date,
-          t.title as current_title,
-          s.amount as current_salary,
-          d.dept_name as current_department,
-          array_agg(DISTINCT t2.title ORDER BY t2.from_date) as title_history,
-          array_agg(DISTINCT d2.dept_name || ': ' || 
-            de2.from_date || ' to ' || 
-            CASE WHEN de2.to_date = '9999-01-01' THEN 'present' 
-                 ELSE de2.to_date::text END
-            ORDER BY de2.from_date) as department_history
-        FROM employee e
-        JOIN title t ON e.id = t.employee_id AND t.to_date = '9999-01-01'
-        JOIN salary s ON e.id = s.employee_id AND s.to_date = '9999-01-01'
-        JOIN department_employee de ON e.id = de.employee_id AND de.to_date = '9999-01-01'
-        JOIN department d ON de.department_id = d.id
-        LEFT JOIN title t2 ON e.id = t2.employee_id
-        LEFT JOIN department_employee de2 ON e.id = de2.employee_id
-        LEFT JOIN department d2 ON de2.department_id = d2.id
-        WHERE e.id = $1
-        GROUP BY e.id, e.first_name, e.last_name, e.hire_date,
-                 t.title, s.amount, d.dept_name
-      `,
-        [req.params.id]
-      );
-      await client.query('COMMIT');
-      res.json({ status: 'ok', data: rows[0] || null });
-    } catch (err) {
-      if (client) {
-        await client.query('ROLLBACK');
-      }
-      newrelic.noticeError(err);
-      res.status(500).json({ error: err.message });
-    } finally {
-      if (client) client.release();
-    }
-  });
-
-  app.get('/admin/employees/data_export', async (req, res) => {
-    newrelic.setTransactionName('Admin/Employee/DataExport');
-    let client;
-    try {
-      client = await pool.connect();
-      const result = await client.query(`
-        SELECT e.*, s.amount as salary, t.title, d.dept_name
-        FROM employee e
-        JOIN salary s ON e.id = s.employee_id
-        JOIN title t ON e.id = s.employee_id
-        JOIN department_employee de ON e.id = de.employee_id
-        JOIN department d ON de.department_id = d.id
-        WHERE s.to_date = '9999-01-01'
-          AND t.to_date = '9999-01-01'
-          AND de.to_date = '9999-01-01'
-      `);
-      res.json({ status: 'ok', data: result.rows });
-    } catch (err) {
-      newrelic.noticeError(err);
       res.status(500).json({ error: err.message });
     } finally {
       if (client) client.release();
@@ -235,24 +70,9 @@ async function startAdminConsole() {
   });
 
   const port = process.env.PORT || 3004;
-  const server = app.listen(port, () => {
-    console.log(`Admin Console running on port ${port}`);
-  });
-
-  process.on('SIGTERM', () => {
-    console.log('Received SIGTERM. Performing graceful shutdown...');
-    server.close(() => {
-      console.log('Server closed. Cleaning up...');
-      pool.end().then(() => {
-        console.log('Database pool closed.');
-        process.exit(0);
-      });
-    });
+  app.listen(port, () => {
+    console.log(`Admin Console listening on port ${port}`);
   });
 }
 
-startAdminConsole().catch(err => {
-  newrelic.noticeError(err);
-  console.error('Failed to start Admin Console:', err);
-  process.exit(1);
-});
+startAdminConsole();

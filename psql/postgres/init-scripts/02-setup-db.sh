@@ -61,7 +61,7 @@ import_data() {
     
     while [ $retry -lt $max_retries ]; do
         if psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$processed_file"; then
-            log "Data import completed successfully"
+            log "Data import completed successfully - psql command successful"
             return 0
         fi
         log "Import attempt $((retry + 1)) failed, retrying..."

@@ -1,0 +1,14 @@
+license_key: ${NEW_RELIC_LICENSE_KEY}
+app_name: ${NEW_RELIC_APP_NAME_REPORTING}  # <-- Correct app name
+distributed_tracing:
+  enabled: true
+application_logging:
+  forwarding:
+    enabled: false # rely on standard output
+logging:
+  level: info  # Use 'info' or 'trace' for more details
+datastore_tracer:
+    instance_reporting:
+      enabled: true
+    database_name_reporting:
+      enabled: true
