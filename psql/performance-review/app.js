@@ -1,7 +1,5 @@
-// performance-review/app.js
+// Ensure newrelic is the first import
 const newrelic = require('newrelic');
-console.log('New Relic agent status:', newrelic.agent.config.agent_enabled);
-
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -10,6 +8,7 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
+    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,8 +29,19 @@ async function startPerformanceReview() {
     idleTimeoutMillis: 30000
   });
 
-  pool.on('connect', (client) => {
-    client.query('SET search_path TO employees, public');
+  pool.on('error', (err) => {
+    newrelic.noticeError(err);
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+  });
+
+  pool.on('connect', async (client) => {
+    try {
+      await client.query('SET search_path TO employees, public');
+    } catch (err) {
+      client.release();
+      throw err;
+    }
   });
 
   const app = express();
@@ -39,12 +49,12 @@ async function startPerformanceReview() {
   app.use(requestLogger('Performance-Review'));
 
   app.get('/health', (req, res) => {
+    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  // 1. Employee list with performance indicators
   app.get('/perf/employees/list', async (req, res) => {
-    newrelic.setTransactionName('performance-review-employee-list');
+    newrelic.setTransactionName('Performance/Employee/List');
     let client;
     try {
       client = await pool.connect();
@@ -82,9 +92,8 @@ async function startPerformanceReview() {
     }
   });
 
-  // 2. Career progression analysis
   app.get('/perf/employees/career_progression', async (req, res) => {
-    newrelic.setTransactionName('performance-review-career-progression');
+    newrelic.setTransactionName('Performance/Employee/CareerProgression');
     let client;
     try {
       client = await pool.connect();
@@ -127,9 +136,8 @@ async function startPerformanceReview() {
     }
   });
 
-  // 3. Department performance metrics
   app.get('/perf/departments/avg_score', async (req, res) => {
-    newrelic.setTransactionName('performance-review-department-avg-score');
+    newrelic.setTransactionName('Performance/Department/AverageScore');
     let client;
     try {
       client = await pool.connect();
@@ -171,9 +179,8 @@ async function startPerformanceReview() {
     }
   });
 
-  // 4. Top performers
   app.get('/perf/employees/top_performers', async (req, res) => {
-    newrelic.setTransactionName('performance-review-top-performers');
+    newrelic.setTransactionName('Performance/Employee/TopPerformers');
     let client;
     try {
       client = await pool.connect();
@@ -214,9 +221,8 @@ async function startPerformanceReview() {
     }
   });
 
-  // 5. Annual performance summary
   app.get('/perf/reports/annual_performance_summary', async (req, res) => {
-    newrelic.setTransactionName('performance-review-annual-summary');
+    newrelic.setTransactionName('Performance/Report/AnnualSummary');
     let client;
     try {
       client = await pool.connect();
@@ -249,7 +255,24 @@ async function startPerformanceReview() {
   });
 
   const port = process.env.PORT || 3003;
-  app.listen(port, () => console.log(`Performance Review System running on port ${port}`));
+  const server = app.listen(port, () => {
+    console.log(`Performance Review System running on port ${port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Performing graceful shutdown...');
+    server.close(() => {
+      console.log('Server closed. Cleaning up...');
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      });
+    });
+  });
 }
 
-startPerformanceReview().catch(console.error);
+startPerformanceReview().catch(err => {
+  newrelic.noticeError(err);
+  console.error('Failed to start Performance Review System:', err);
+  process.exit(1);
+});

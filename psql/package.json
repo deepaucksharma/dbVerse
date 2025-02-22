@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@newrelic/native-metrics": "^11.0.0"
+  }
+}

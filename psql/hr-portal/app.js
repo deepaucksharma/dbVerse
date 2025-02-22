@@ -1,7 +1,5 @@
-// hr-portal/app.js
+// Ensure newrelic is the first import
 const newrelic = require('newrelic');
-console.log('New Relic agent status:', newrelic.agent.config.agent_enabled);
-
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -10,6 +8,7 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
+    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,6 +29,12 @@ async function startHRPortal() {
     idleTimeoutMillis: 30000
   });
 
+  pool.on('error', (err) => {
+    newrelic.noticeError(err);
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+  });
+
   pool.on('connect', async (client) => {
     try {
       await client.query('SET search_path TO employees, public');
@@ -39,22 +44,17 @@ async function startHRPortal() {
     }
   });
 
-  pool.on('error', (err) => {
-    console.error('Unexpected error on idle client', err);
-    process.exit(-1);
-  });
-
   const app = express();
   app.use(express.json());
   app.use(requestLogger('HR-Portal'));
 
   app.get('/health', (req, res) => {
+    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  // 1. Search by hire_date (missing index)
   app.get('/hr/employees/search', async (req, res) => {
-    newrelic.setTransactionName('hr-portal-employee-search');
+    newrelic.setTransactionName('HR/Employee/Search');
     let client;
     try {
       client = await pool.connect();
@@ -75,16 +75,14 @@ async function startHRPortal() {
         await client.query('ROLLBACK');
       }
       newrelic.noticeError(err);
-      console.error(`/hr/employees/search | Error: ${err.message}`, err);
-      res.status(500).json({ error: `Database error: ${err.message}` });
+      res.status(500).json({ error: err.message });
     } finally {
       if (client) client.release();
     }
   });
 
-  // 2. Search by name or department (inefficient OR + LIKE)
   app.get('/hr/employees/search_by_name_or_dept', async (req, res) => {
-    newrelic.setTransactionName('hr-portal-employee-search-by-name-or-dept');
+    newrelic.setTransactionName('HR/Employee/SearchByNameOrDept');
     let client;
     try {
       client = await pool.connect();
@@ -110,9 +108,8 @@ async function startHRPortal() {
     }
   });
 
-  // 3. List all employees
   app.get('/hr/employees/list', async (req, res) => {
-    newrelic.setTransactionName('hr-portal-employee-list');
+    newrelic.setTransactionName('HR/Employee/List');
     let client;
     try {
       client = await pool.connect();
@@ -141,9 +138,8 @@ async function startHRPortal() {
     }
   });
 
-  // 4. Transfer employees
   app.post('/hr/employees/transfer', async (req, res) => {
-    newrelic.setTransactionName('hr-portal-employee-transfer');
+    newrelic.setTransactionName('HR/Employee/Transfer');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -167,6 +163,7 @@ async function startHRPortal() {
             LIMIT 100
           );
       `);
+
       await client.query(`
         INSERT INTO department_employee (employee_id, department_id, from_date, to_date)
         SELECT de.employee_id, 'd001', CURRENT_DATE, '9999-01-01'
@@ -175,6 +172,7 @@ async function startHRPortal() {
           AND de.to_date = CURRENT_DATE
         ON CONFLICT (employee_id, department_id) DO NOTHING;
       `);
+
       await client.query('COMMIT');
       res.json({ status: 'ok', transferred: 100 });
     } catch (err) {
@@ -186,9 +184,8 @@ async function startHRPortal() {
     }
   });
 
-  // 5. Update salary
   app.put('/hr/employees/update_salary', async (req, res) => {
-    newrelic.setTransactionName('hr-portal-employee-update-salary');
+    newrelic.setTransactionName('HR/Employee/UpdateSalary');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -199,7 +196,6 @@ async function startHRPortal() {
           await client.query(`SELECT id FROM employee ORDER BY random() LIMIT 1`)
         ).rows[0].id;
 
-      // 1) End old salary
       await client.query(
         `
         UPDATE salary
@@ -209,7 +205,6 @@ async function startHRPortal() {
         [employeeId]
       );
 
-      // 2) Insert new row
       await client.query(
         `
         INSERT INTO salary (employee_id, amount, from_date, to_date)
@@ -240,7 +235,24 @@ async function startHRPortal() {
   });
 
   const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`HR Portal running on port ${port}`));
+  const server = app.listen(port, () => {
+    console.log(`HR Portal running on port ${port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Performing graceful shutdown...');
+    server.close(() => {
+      console.log('Server closed. Cleaning up...');
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      });
+    });
+  });
 }
 
-startHRPortal().catch(console.error);
+startHRPortal().catch(err => {
+  newrelic.noticeError(err);
+  console.error('Failed to start HR Portal:', err);
+  process.exit(1);
+});

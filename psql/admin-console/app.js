@@ -1,7 +1,5 @@
-// admin-console/app.js
+// Ensure newrelic is the first import
 const newrelic = require('newrelic');
-console.log('New Relic agent status:', newrelic.agent.config.agent_enabled);
-
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -10,6 +8,7 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
+    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,11 +29,16 @@ async function startAdminConsole() {
     idleTimeoutMillis: 30000
   });
 
+  pool.on('error', (err) => {
+    newrelic.noticeError(err);
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+  });
+
   pool.on('connect', async (client) => {
     try {
       await client.query('SET search_path TO employees, public');
     } catch (err) {
-      // If this fails, release the client to avoid leaks
       client.release();
       throw err;
     }
@@ -45,12 +49,12 @@ async function startAdminConsole() {
   app.use(requestLogger('Admin-Console'));
 
   app.get('/health', (req, res) => {
+    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  // 1. Complex employee search
   app.get('/admin/employees/search', async (req, res) => {
-    newrelic.setTransactionName('admin-console-employee-search');
+    newrelic.setTransactionName('Admin/Employee/Search');
     let client;
     try {
       client = await pool.connect();
@@ -80,16 +84,14 @@ async function startAdminConsole() {
         await client.query('ROLLBACK');
       }
       newrelic.noticeError(err);
-      console.error(`/admin/employees/search | Error: ${err.message}`, err);
-      res.status(500).json({ error: `Database error: ${err.message}` });
+      res.status(500).json({ error: err.message });
     } finally {
       if (client) client.release();
     }
   });
 
-  // 2. Bulk title update with transaction
   app.put('/admin/employees/bulk_title_update', async (req, res) => {
-    newrelic.setTransactionName('admin-console-bulk-title-update');
+    newrelic.setTransactionName('Admin/Employee/BulkTitleUpdate');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -107,24 +109,23 @@ async function startAdminConsole() {
           RETURNING t.employee_id
         )
         INSERT INTO title (employee_id, title, from_date, to_date)
-        SELECT employee_id, 'Senior Engineer', CURRENT_DATE, NULL
+        SELECT employee_id, 'Senior Engineer', CURRENT_DATE, '9999-01-01'
         FROM current_titles
       `);
 
       await client.query('COMMIT');
       res.json({ status: 'ok' });
     } catch (err) {
-      newrelic.noticeError(err);
       await client.query('ROLLBACK');
+      newrelic.noticeError(err);
       res.status(500).json({ error: err.message });
     } finally {
       client.release();
     }
   });
 
-  // 3. Department management audit
   app.get('/admin/departments/details', async (req, res) => {
-    newrelic.setTransactionName('admin-console-department-details');
+    newrelic.setTransactionName('Admin/Department/Details');
     let client;
     try {
       client = await pool.connect();
@@ -162,9 +163,8 @@ async function startAdminConsole() {
     }
   });
 
-  // 4. Employee details with history
   app.get('/admin/employees/details/:id', async (req, res) => {
-    newrelic.setTransactionName('admin-console-employee-details');
+    newrelic.setTransactionName('Admin/Employee/Details');
     let client;
     try {
       client = await pool.connect();
@@ -197,7 +197,7 @@ async function startAdminConsole() {
         [req.params.id]
       );
       await client.query('COMMIT');
-      res.json({ status: 'ok', data: rows });
+      res.json({ status: 'ok', data: rows[0] || null });
     } catch (err) {
       if (client) {
         await client.query('ROLLBACK');
@@ -209,9 +209,8 @@ async function startAdminConsole() {
     }
   });
 
-  // 5. Data export (no connection leak)
   app.get('/admin/employees/data_export', async (req, res) => {
-    newrelic.setTransactionName('admin-console-data-export');
+    newrelic.setTransactionName('Admin/Employee/DataExport');
     let client;
     try {
       client = await pool.connect();
@@ -219,7 +218,7 @@ async function startAdminConsole() {
         SELECT e.*, s.amount as salary, t.title, d.dept_name
         FROM employee e
         JOIN salary s ON e.id = s.employee_id
-        JOIN title t ON e.id = t.employee_id
+        JOIN title t ON e.id = s.employee_id
         JOIN department_employee de ON e.id = de.employee_id
         JOIN department d ON de.department_id = d.id
         WHERE s.to_date = '9999-01-01'
@@ -236,7 +235,24 @@ async function startAdminConsole() {
   });
 
   const port = process.env.PORT || 3004;
-  app.listen(port, () => console.log(`Admin Console running on port ${port}`));
+  const server = app.listen(port, () => {
+    console.log(`Admin Console running on port ${port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Performing graceful shutdown...');
+    server.close(() => {
+      console.log('Server closed. Cleaning up...');
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      });
+    });
+  });
 }
 
-startAdminConsole().catch(console.error);
+startAdminConsole().catch(err => {
+  newrelic.noticeError(err);
+  console.error('Failed to start Admin Console:', err);
+  process.exit(1);
+});

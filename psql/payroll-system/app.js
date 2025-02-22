@@ -1,7 +1,5 @@
-// payroll-system/app.js
+// Ensure newrelic is the first import
 const newrelic = require('newrelic');
-console.log('New Relic agent status:', newrelic.agent.config.agent_enabled);
-
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -10,6 +8,7 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
+    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,6 +29,12 @@ async function startPayrollSystem() {
     idleTimeoutMillis: 30000
   });
 
+  pool.on('error', (err) => {
+    newrelic.noticeError(err);
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+  });
+
   pool.on('connect', async (client) => {
     try {
       await client.query('SET search_path TO employees, public');
@@ -44,12 +49,12 @@ async function startPayrollSystem() {
   app.use(requestLogger('Payroll-System'));
 
   app.get('/health', (req, res) => {
+    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  // 1. Basic salary retrieval
   app.get('/payroll/salaries/by_employee', async (req, res) => {
-    newrelic.setTransactionName('payroll-system-salary-by-employee');
+    newrelic.setTransactionName('Payroll/Salary/ByEmployee');
     let client;
     try {
       client = await pool.connect();
@@ -93,9 +98,8 @@ async function startPayrollSystem() {
     }
   });
 
-  // 2. Salary range search
   app.get('/payroll/salaries/by_range', async (req, res) => {
-    newrelic.setTransactionName('payroll-system-salary-by-range');
+    newrelic.setTransactionName('Payroll/Salary/ByRange');
     let client;
     try {
       client = await pool.connect();
@@ -132,9 +136,8 @@ async function startPayrollSystem() {
     }
   });
 
-  // 3. Salary adjustment (simulate slow)
   app.put('/payroll/salaries/adjust', async (req, res) => {
-    newrelic.setTransactionName('payroll-system-salary-adjust');
+    newrelic.setTransactionName('Payroll/Salary/Adjust');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -160,29 +163,26 @@ async function startPayrollSystem() {
           AND s.to_date = CURRENT_DATE
       `);
 
-      // Simulate slow operation
       await new Promise((resolve) => setTimeout(resolve, 5000));
 
       await client.query('COMMIT');
       res.json({ status: 'ok' });
     } catch (err) {
-      newrelic.noticeError(err);
       await client.query('ROLLBACK');
+      newrelic.noticeError(err);
       res.status(500).json({ error: err.message });
     } finally {
       client.release();
     }
   });
 
-  // 4. High connection load simulation
   app.get('/payroll/employees/high_connection_load', async (req, res) => {
-    newrelic.setTransactionName('payroll-system-high-connection-load');
+    newrelic.setTransactionName('Payroll/Employee/HighConnectionLoad');
     const connections = [];
     try {
       for (let i = 0; i < 20; i++) {
         const conn = await pool.connect();
         connections.push(conn);
-        // No transaction needed for single read
         await conn.query(
           `
           SELECT 
@@ -210,9 +210,8 @@ async function startPayrollSystem() {
     }
   });
 
-  // 5. Highest earners
   app.get('/payroll/reports/highest_earners', async (req, res) => {
-    newrelic.setTransactionName('payroll-system-highest-earners');
+    newrelic.setTransactionName('Payroll/Report/HighestEarners');
     let client;
     try {
       client = await pool.connect();
@@ -253,7 +252,24 @@ async function startPayrollSystem() {
   });
 
   const port = process.env.PAYROLL_SYSTEM_PORT || 3001;
-  app.listen(port, () => console.log(`Payroll System running on port ${port}`));
+  const server = app.listen(port, () => {
+    console.log(`Payroll System running on port ${port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Performing graceful shutdown...');
+    server.close(() => {
+      console.log('Server closed. Cleaning up...');
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      });
+    });
+  });
 }
 
-startPayrollSystem().catch(console.error);
+startPayrollSystem().catch(err => {
+  newrelic.noticeError(err);
+  console.error('Failed to start Payroll System:', err);
+  process.exit(1);
+});

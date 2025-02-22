@@ -1,7 +1,5 @@
-// reporting-dashboard/app.js
+// Ensure newrelic is the first import
 const newrelic = require('newrelic');
-console.log('New Relic agent status:', newrelic.agent.config.agent_enabled);
-
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -10,6 +8,7 @@ const requestLogger = (serviceName) => (req, res, next) => {
   const originalJson = res.json;
   res.json = function (data) {
     const duration = Date.now() - startTime;
+    newrelic.addCustomAttribute('responseTime', duration);
     console.log(
       `${serviceName} | ${req.method} ${req.originalUrl} | Status: ${res.statusCode} | ${duration}ms${
         data.error ? ` | Error: ${data.error}` : ''
@@ -30,6 +29,12 @@ async function startReportingDashboard() {
     idleTimeoutMillis: 30000
   });
 
+  pool.on('error', (err) => {
+    newrelic.noticeError(err);
+    console.error('Unexpected error on idle client', err);
+    process.exit(-1);
+  });
+
   pool.on('connect', async (client) => {
     try {
       await client.query('SET search_path TO employees, public');
@@ -44,12 +49,12 @@ async function startReportingDashboard() {
   app.use(requestLogger('Reporting-Dashboard'));
 
   app.get('/health', (req, res) => {
+    newrelic.setTransactionName('System/HealthCheck');
     res.json({ status: 'ok' });
   });
 
-  // 1. List all employees (limit 1000)
   app.get('/reports/employees/list_all', async (req, res) => {
-    newrelic.setTransactionName('reporting-dashboard-employee-list-all');
+    newrelic.setTransactionName('Report/Employee/ListAll');
     let client;
     try {
       client = await pool.connect();
@@ -90,9 +95,8 @@ async function startReportingDashboard() {
     }
   });
 
-  // 2. Department salary statistics
   app.get('/reports/departments/average_salary', async (req, res) => {
-    newrelic.setTransactionName('reporting-dashboard-department-average-salary');
+    newrelic.setTransactionName('Report/Department/AverageSalary');
     let client;
     try {
       client = await pool.connect();
@@ -130,9 +134,8 @@ async function startReportingDashboard() {
     }
   });
 
-  // 3. Employee tenure analysis
   app.get('/reports/employees/long_tenure', async (req, res) => {
-    newrelic.setTransactionName('reporting-dashboard-employee-long-tenure');
+    newrelic.setTransactionName('Report/Employee/LongTenure');
     let client;
     try {
       client = await pool.connect();
@@ -174,9 +177,8 @@ async function startReportingDashboard() {
     }
   });
 
-  // 4. Department salary rankings
   app.get('/reports/salaries/highest_by_dept', async (req, res) => {
-    newrelic.setTransactionName('reporting-dashboard-salaries-highest-by-dept');
+    newrelic.setTransactionName('Report/Salary/HighestByDepartment');
     let client;
     try {
       client = await pool.connect();
@@ -222,35 +224,32 @@ async function startReportingDashboard() {
     }
   });
 
-  // 5. Concurrent report generation
   app.get('/reports/employees/concurrent_report_generation', async (req, res) => {
-    newrelic.setTransactionName('reporting-dashboard-concurrent-report-generation');
+    newrelic.setTransactionName('Report/Employee/ConcurrentGeneration');
     const connections = [];
     try {
-      const promises = Array(15)
-        .fill()
-        .map(async () => {
-          const conn = await pool.connect();
-          connections.push(conn);
-          // Single query, no transaction needed
-          return conn.query(`
-            SELECT 
-              e.id,
-              e.first_name,
-              e.last_name,
-              e.birth_date,
-              e.gender,
-              e.hire_date,
-              s.amount as salary,
-              t.title
-            FROM employee e
-            JOIN salary s ON e.id = s.employee_id
-            JOIN title t ON e.id = t.employee_id
-            WHERE s.to_date = '9999-01-01'
-              AND t.to_date = '9999-01-01'
-              AND e.hire_date BETWEEN '1985-01-01' AND '1995-12-31'
-          `);
-        });
+      const promises = Array(15).fill().map(async () => {
+        const conn = await pool.connect();
+        connections.push(conn);
+        return conn.query(`
+          SELECT 
+            e.id,
+            e.first_name,
+            e.last_name,
+            e.birth_date,
+            e.gender,
+            e.hire_date,
+            s.amount as salary,
+            t.title
+          FROM employee e
+          JOIN salary s ON e.id = s.employee_id
+          JOIN title t ON e.id = t.employee_id
+          WHERE s.to_date = '9999-01-01'
+            AND t.to_date = '9999-01-01'
+            AND e.hire_date BETWEEN '1985-01-01' AND '1995-12-31'
+        `);
+      });
+
       await Promise.all(promises);
       res.json({ status: 'ok' });
     } catch (err) {
@@ -262,7 +261,24 @@ async function startReportingDashboard() {
   });
 
   const port = process.env.PORT || 3002;
-  app.listen(port, () => console.log(`Reporting Dashboard running on port ${port}`));
+  const server = app.listen(port, () => {
+    console.log(`Reporting Dashboard running on port ${port}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Performing graceful shutdown...');
+    server.close(() => {
+      console.log('Server closed. Cleaning up...');
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      });
+    });
+  });
 }
 
-startReportingDashboard().catch(console.error);
+startReportingDashboard().catch(err => {
+  newrelic.noticeError(err);
+  console.error('Failed to start Reporting Dashboard:', err);
+  process.exit(1);
+});
