@@ -1,15 +1,20 @@
-version: "3.8"
+version: "3.9"
 
 services:
-  mssql:
+  mssql-db:
     build:
       context: ./mssql
+      dockerfile: Dockerfile
+      args:
+        - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+        - NR_INFRA_VERSION=1.58.1
     environment:
       - ACCEPT_EULA=Y
       - SA_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_PID=Developer
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
     volumes:
-      - sqldata:/var/opt/mssql
+      - mssql-data:/var/opt/mssql
       - ./backup:/var/opt/mssql/backup
       - ./mssql/init-scripts:/var/opt/mssql/init-scripts
     ports:
@@ -17,128 +22,298 @@ services:
     networks:
       - backend
     healthcheck:
-      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "${MSSQL_SA_PASSWORD}" -Q "SELECT 1" || exit 1
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
+      test: [
+        "CMD-SHELL",
+        "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P '${MSSQL_SA_PASSWORD}' -Q 'SELECT 1' && test -f /var/opt/mssql/status/ready"
+      ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    restart: unless-stopped
 
-  admin:
+  admin-console:
     build:
       context: ./services/admin
+      dockerfile: Dockerfile
     environment:
-      - MSSQL_HOST=mssql
+      - MSSQL_HOST=mssql-db
       - MSSQL_USER=sa
       - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_DB=AdventureWorks
       - MSSQL_PORT=1433
-
       - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_ADMIN}
-      - PORT=3003
+      - NODE_ENV=production
+      - PORT=3004
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
     volumes:
       - ./services/shared:/app/shared:ro
     ports:
-      - "${ADMIN_CONSOLE_PORT}:3003"
-    networks:
-      - frontend
-      - backend
+      - "${ADMIN_CONSOLE_PORT}:${ADMIN_CONSOLE_PORT}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${ADMIN_CONSOLE_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     depends_on:
-      mssql:
+      mssql-db:
         condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
-  hr:
+  hr-portal:
     build:
       context: ./services/hr
+      dockerfile: Dockerfile
     environment:
-      - MSSQL_HOST=mssql
+      - MSSQL_HOST=mssql-db
       - MSSQL_USER=sa
       - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_DB=AdventureWorks
       - MSSQL_PORT=1433
-
       - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_HR}
-      - PORT=3000
+      - NODE_ENV=production
+      - PORT=${HR_PORTAL_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
     volumes:
       - ./services/shared:/app/shared:ro
     ports:
       - "${HR_PORTAL_PORT}:3000"
-    networks:
-      - frontend
-      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${HR_PORTAL_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     depends_on:
-      mssql:
+      mssql-db:
         condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
-  payroll:
+  payroll-system:
     build:
       context: ./services/payroll
+      dockerfile: Dockerfile
     environment:
-      - MSSQL_HOST=mssql
+      - MSSQL_HOST=mssql-db
       - MSSQL_USER=sa
       - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_DB=AdventureWorks
       - MSSQL_PORT=1433
-
       - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PAYROLL}
-      - PORT=3001
+      - NODE_ENV=production
+      - PORT=${PAYROLL_SYSTEM_PORT}
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
     volumes:
       - ./services/shared:/app/shared:ro
     ports:
       - "${PAYROLL_SYSTEM_PORT}:3001"
-    networks:
-      - frontend
-      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PAYROLL_SYSTEM_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     depends_on:
-      mssql:
+      mssql-db:
         condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
-  performance:
+  performance-review:
     build:
       context: ./services/performance
+      dockerfile: Dockerfile
     environment:
-      - MSSQL_HOST=mssql
+      - MSSQL_HOST=mssql-db
       - MSSQL_USER=sa
       - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD}
       - MSSQL_DB=AdventureWorks
       - MSSQL_PORT=1433
-
       - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_PERFORMANCE}
-      - PORT=3002
+      - NODE_ENV=production
+      - PORT=3003
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
     volumes:
       - ./services/shared:/app/shared:ro
     ports:
-      - "${PERFORMANCE_REVIEW_PORT}:3002"
-    networks:
-      - frontend
-      - backend
+      - "${PERFORMANCE_REVIEW_PORT}:${PERFORMANCE_REVIEW_PORT}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PERFORMANCE_REVIEW_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     depends_on:
-      mssql:
+      mssql-db:
         condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  reporting-dashboard:
+    build:
+      context: ./services/reporting
+      dockerfile: Dockerfile
+    environment:
+      - MSSQL_HOST=mssql-db
+      - MSSQL_USER=sa
+      - MSSQL_PASSWORD=${MSSQL_SA_PASSWORD}
+      - MSSQL_DB=AdventureWorks
+      - MSSQL_PORT=1433
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME_REPORTING}
+      - NODE_ENV=production
+      - PORT=3002
+      - DB_CONNECTION_RETRIES=5
+      - DB_CONNECTION_RETRY_DELAY=5000
+    ports:
+      - "${REPORTING_DASHBOARD_PORT}:${REPORTING_DASHBOARD_PORT}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${REPORTING_DASHBOARD_PORT}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    depends_on:
+      mssql-db:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
 
   k6:
-    image: grafana/k6:latest
+    image: grafana/k6
     volumes:
       - ./k6/scripts:/scripts
     environment:
       - HR_PORTAL_URL=${HR_PORTAL_URL}
       - PAYROLL_SYSTEM_URL=${PAYROLL_SYSTEM_URL}
+      - REPORTING_DASHBOARD_URL=${REPORTING_DASHBOARD_URL}
       - PERFORMANCE_REVIEW_URL=${PERFORMANCE_REVIEW_URL}
       - ADMIN_CONSOLE_URL=${ADMIN_CONSOLE_URL}
     networks:
       - frontend
     depends_on:
-      - hr
-      - payroll
-      - performance
-      - admin
+      mssql-db:
+        condition: service_healthy
+    command: run /scripts/load-test.js
 
 networks:
   frontend:
+    name: mssql_frontend
+    driver: bridge
   backend:
+    name: mssql_backend
+    driver: bridge
 
 volumes:
-  sqldata:
+  mssql-data:
+    name: mssql_data
+    driver: local

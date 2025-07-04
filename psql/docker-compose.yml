@@ -23,6 +23,7 @@ services:
       - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgres/init-scripts:/docker-entrypoint-initdb.d:ro
+    shm_size: '2gb'
     healthcheck:
       test:
         [

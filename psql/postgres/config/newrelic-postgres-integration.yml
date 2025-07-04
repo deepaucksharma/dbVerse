@@ -4,7 +4,7 @@ integrations:
     command: /var/db/newrelic-infra/newrelic-integrations/nri-postgresql
     env:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: pass
       POSTGRES_HOSTNAME: localhost
       POSTGRES_PORT: 5432
       POSTGRES_DB: employees

@@ -1,0 +1,17 @@
+---
+integrations:
+  - name: nri-mssql
+    env:
+      HOSTNAME: localhost
+      PORT: 1433
+      USERNAME: sa
+      PASSWORD: ${MSSQL_SA_PASSWORD}
+      ENABLE_SSL: false
+      ENABLE_BUFFER_METRICS: true
+      ENABLE_DATABASE_RESERVE_METRICS: true
+      TIMEOUT: 30
+    interval: 30s
+    labels:
+      env: production
+      role: database
+      team: dbverse

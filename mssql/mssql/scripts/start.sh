@@ -1,6 +1,16 @@
 #!/bin/bash
 set -e
 
+# Start New Relic Infrastructure agent if license key is provided
+if [ -n "${NEW_RELIC_LICENSE_KEY}" ] && [ -f "/usr/local/newrelic-infra/bin/newrelic-infra" ]; then
+    echo "Starting New Relic Infrastructure agent..."
+    /usr/local/newrelic-infra/bin/newrelic-infra -config /etc/newrelic-infra.yml &
+    NEWRELIC_PID=$!
+    echo "New Relic Infrastructure agent started with PID $NEWRELIC_PID"
+else
+    echo "New Relic Infrastructure agent not started (no license key or binary not found)"
+fi
+
 # Start SQL Server
 /opt/mssql/bin/sqlservr &
 SQLSERVER_PID=$!
@@ -76,6 +86,9 @@ echo "Configuring database settings..."
 ALTER DATABASE AdventureWorks SET READ_COMMITTED_SNAPSHOT ON;
 ALTER DATABASE AdventureWorks SET QUERY_STORE = ON;
 "
+
+# Signal that initialization is complete
+touch /var/opt/mssql/status/ready
 
 # Wait for SQL Server process
 wait $SQLSERVER_PID

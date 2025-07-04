@@ -1,0 +1,25 @@
+integrations:
+  - name: nri-mysql
+    env:
+      METRICS: true
+      HOSTNAME: mysql-db
+      PORT: 3306
+      USERNAME: root
+      PASSWORD: pass
+      DATABASE_PREFIX: employees
+      EXTENDED_METRICS: true
+      EXTENDED_INNODB_METRICS: true
+      QUERY_METRICS: true
+      # Use command to check MySQL integration
+      CUSTOM_METRICS_QUERY: |
+        SELECT 
+          'mysql.custom.connections' as metric_name,
+          count(*) as metric_value,
+          'gauge' as metric_type
+        FROM information_schema.processlist
+    interval: 30s
+    inventory_source: config/mysql
+    labels:
+      env: production
+      role: database
+      service: mysql
